@@ -1,0 +1,55 @@
+harstep <- function(p, d, m) {if (d != 20)
+  stop("HAR(3)-RV process requires 20 lags")
+  out <- rep(0, 20)
+  out[1] <- p[1] + p[2] / 5 + p[3] / 20
+  out[2:5] <- p[2] / 5 + p[3] / 20
+  out[6:20] <- p[3] / 20
+  out
+} 
+
+
+data("rvsp500", package = "midasr")
+spx2_rvol <- 100 * sqrt(252 * as.numeric(rvsp500[, "SPX2.rv"]))
+mh <- midas_r(rv ~ mls(rv, 1:20, 1, harstep), data = list(rv = spx2_rvol),
+              start = list(rv = c(1, 1, 1)))
+summary(mh)
+
+
+mr <- midas_r(rv ~ mls(rv, 1:20, 1, nealmon), data = list(rv = spx2_rvol),
+              start = list(rv = c(0, 0, 0)), weight_gradients = list())
+summary(mr)
+
+
+ar20 <- midas_r(rv ~ mls(rv, 1:20, 1), data = list(rv = spx2_rvol),
+                start = NULL)
+
+forc <- average_forecast(list(ar20, mh, bm), data = list(rv = spx2_rvol),
+                         insample = 1:1000, outsample = 1001:1100, type = "rolling",
+                         show_progress = TRUE)
+forc$accuracy$individual
+
+forecast(mh, newdata = list(rv = rep(NA, 1)))
+
+
+
+set.seed(1001)
+n <- 250
+trend <- c(1:n)
+x <- rnorm(4 * n)
+z <- rnorm(12 * n)
+fn.x <- nealmon(p = c(1, -0.5), d = 8)
+y <- 2 + 0.1 * trend + mls(x, 0:7, 4) %*% fn.x + rnorm(n)
+
+
+select_and_forecast(y~trend+mls(y,1,1,"*")+mls(x,0,4),
+                    from=list(x=c(4)),
+                    to=list(x=rbind(c(14,19))),
+                    insample=1:250,outsample=240:260,
+                    weights=list(x=c("nealmon","almonp")),
+                    wstart=list(nealmon=rep(1,3),almonp=rep(1,3)),
+                    IC="AIC",
+                    seltype="restricted",
+                    ftype="recursive",
+                    measures=c("MSE"),
+                    fweights=c("EW","BICW")
+)$forecasts[[1]]$forecast

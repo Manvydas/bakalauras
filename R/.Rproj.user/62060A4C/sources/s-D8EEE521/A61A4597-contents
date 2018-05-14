@@ -1,0 +1,733 @@
+#
+# This is a Shiny web application. You can run the application by clicking
+# the 'Run App' button above.
+#
+# Find out more about building applications with Shiny here:
+#
+#    http://shiny.rstudio.com/
+#
+
+library(shiny)
+library(DT)
+library(htmltools)
+library(data.table)
+library(shinyBS)
+
+library(shinythemes)
+ 
+library(zeroclipr)
+library(clipr)
+
+library(shinyjs)
+
+
+setdiffDF <- function(A, B, to.return = "both") {
+  f <- function(A, B)
+    A[!duplicated(rbind(B, A))[nrow(B) + 1:nrow(A)], ]
+  if (ifelse(is.null(A), TRUE, nrow(A) == 0)) {
+    if (to.return %in% c("B", "both")) {
+      df1 <- B
+    } else {
+      df1 <- NULL
+    }
+  } else {
+    df1 <- f(A, B)
+  }
+  if (ifelse(is.null(B), TRUE, nrow(B) == 0)) {
+    if (to.return %in% c("A", "both")) {
+      df2 <- A
+    } else {
+      df2 <- NULL
+    }
+  } else {
+    df2 <- f(B, A)
+  }
+  df <- rbind(df1, df2)
+  if (to.return == "both") return(df)
+  if (to.return == "A") return(df1)
+  if (to.return == "B") return(df2)
+}
+
+# UI -----------------------------------------------------------------------
+ui <-
+  fluidPage(
+    theme = shinytheme("flatly"), titlePanel("Similarity tool"),
+    useShinyjs(),
+    
+    tabsetPanel( id = "tabs",
+      ## I. Tab1 -------------------------------------------------------------
+      tabPanel("tab1",
+               wellPanel(
+                 fluidRow(
+                   ### |-- Input: Select a file ####
+                   column(4,
+                          wellPanel(
+                            fileInput("file1", "Choose CSV File", multiple = FALSE,
+                                      accept = c("text/csv",
+                                                 "text/comma-separated-values,text/plain",
+                                                 ".csv")
+                            )
+                          )
+                   ),
+                   ### |-- Drop-down lists ####
+                   column(3,
+                          wellPanel( id = "country_pan",
+                            uiOutput("country_list")
+                          )
+                   ),
+                   column(3,
+                          wellPanel( id = "product_pan",
+                            uiOutput("product_list")
+                          )
+                   ),
+                   column(2, 
+                          wellPanel( id = "year_pan",
+                            uiOutput("year_list")
+                          )
+                   )
+                 ),
+                 
+                 fluidRow(
+                   column(4,
+                          wellPanel( id = "last_file_uploaded_pan",
+                            ### |-- Last file uploaded ####
+                            verbatimTextOutput("last_file_uploaded")
+                          )
+                   ),
+                   column(6,
+                          wellPanel( id = "formula_pan",
+                            ### |-- Formula ####
+                            verbatimTextOutput("formula")
+                            
+                          )
+                   ),
+                   column(2, 
+                          wellPanel( id = "ctycode_pan",
+                            uiOutput("ctycode_list")
+                          )
+                   )
+                 ),
+                 style = "background-color:white;border:3px #c3c3c3 solid;"
+               ),
+               
+               fluidRow(column(12, bsAlert("copyA"))),
+               
+               fluidRow(
+                 column(10,
+                        ### |-- min/mean/max sim.own table ####
+                        bsCollapse( id = "col_pan1",
+                          bsCollapsePanel(
+                            title = span('Summary',
+                                         em(div(style = 'float:right;', 'show/hide'))),
+                            value = "Summary panel",
+                            div(DT::dataTableOutput("simOwn"), style = "font-size: 96%;"),
+                            style = "default"
+                          )
+                        )
+                 )
+               ),
+               
+               ### |-- main table panel ####
+               fluidRow(
+                 column(12,
+                        bsCollapse( id = "col_pan2", open = "maintbl panel",
+                                    bsCollapsePanel( #id = "collapspan2",
+                                      title = span('Filtered data',
+                                                   em(div(style = 'float:right;', 'show/hide'))),
+                                      value = "maintbl panel",
+                                      wellPanel(id = "scaling_pan", fluidRow(
+                                        column(2, numericInput("scaling_numb", "Scaling number:", 10^4, min = 0, step = 10)
+                                        ),
+                                        column(2, checkboxInput("scaling_on", "scaling", value = TRUE),
+                                               checkboxInput("exp_adj_val", "exp(adj.value2)", value = TRUE)
+                                        ),
+                                        column(3, uiOutput("adj_val_2")
+                                        )
+                                      )),
+                                      fluidRow(div(DT::dataTableOutput("main_tbl"), style = "width:100%")),
+                                      style = "default"
+                                    )
+                        )
+                 )
+               )
+      ),
+      
+      ## II. Tab2 -------------------------------------------------------------
+      tabPanel("tab2",
+               wellPanel( id = "tab2_pan",
+                 fluidRow(
+                   column(3,
+                          wellPanel(
+                            selectInput("select_country", "Country",
+                                        choices = NULL, multiple = F)
+                          )
+                   ),
+                   column(3,
+                          wellPanel(
+                            selectInput("select_product", "Product",
+                                        choices = NULL, multiple = F)
+                          )
+                   ),
+                   column(3,
+                          wellPanel( id = "down_pan",
+                                     downloadButton("downloadData", "Download csv")
+                          ),
+                          wellPanel( id = "copy_pan",
+                                     uiOutput("clip")
+                          )
+                   ),
+                   column(3,
+                          wellPanel( id = "get_old_dat_pan",
+                            actionButton("get_old_dat", "Reload previous selections")
+                          )
+                   )
+                 ),
+                 style = "background-color:white;border:3px #c3c3c3 solid;"
+                 
+               ),
+               
+               fluidRow(
+                 column(5,
+                        div(DT::dataTableOutput("selectdat"), style = "font-size: 96%; width:100%")
+                 )
+               )
+      )
+    )
+  )
+
+# SERVER --------------------------------------------------------------------
+server <- function(input, output, session) {
+  shinyjs::hide("last_file_uploaded_pan")
+  shinyjs::hide("ctycode_pan")
+  shinyjs::hideElement("country_pan")
+  shinyjs::hideElement("product_pan")
+  shinyjs::hideElement("year_pan")
+  shinyjs::hideElement("formula_pan")
+  shinyjs::hideElement("col_pan1")
+  shinyjs::hideElement("col_pan2")
+  hideTab("tabs","tab2")
+  
+  ## The first number stands for the maximum upload size in megabytes
+  options(shiny.maxRequestSize = 1000 * 1024 ^ 2)
+  
+  
+  # Reactive ----------------------------------------------------------------
+  fullData <- reactiveValues(data = NULL,
+                             filtered = NULL,
+                             drop = NULL,
+                             selected = NULL,
+                             drop2 = NULL,
+                             DFf = NULL,
+                             filtered2 = NULL
+  )
+  
+  # Observe -----------------------------------------------------------------
+  
+  ## |-- Reading data, updating drop-down lists ####
+  observe(if (!is.null(input$file1)) {
+    inFile <- input$file1
+    req(inFile)
+    
+    if (grepl(".csv$", inFile$name)) {
+    
+    dat <- as.data.table(fread(inFile$datapath))
+    if( all(c("Product", "Country", "SimCountry", "Year",
+          "Formula", "Similarity", "sim.own", "adj.value") %in% colnames(dat))) {
+     dat <- dat[ , c("Product", "Country", "SimCountry", "Year",
+                    "Formula", "Similarity", "sim.own", "adj.value")]
+    
+    
+    # select = c("Product", "Country", "SimCountry", "Year",
+    #              "Formula", "Similarity", "sim.own", "adj.value")
+    
+    # adding ctycode  and region
+    if (file.exists("Country list.csv")){
+      cntr_list <- fread("Country list.csv")
+      dat$CtyCode <- cntr_list$ctyCode[ match(dat$Country, cntr_list$Country)]
+      dat$Region <- cntr_list$Region[ match(dat$Country, cntr_list$Country)]
+      
+      output$ctycode_list <- renderUI({
+        vars4 <- c("All ctycodes", as.character(unique(dat$CtyCode)))
+        selectInput("ctycode", "CtyCode",
+                    choices = vars4, selected = vars4[1], multiple = TRUE)
+      })
+    
+      # assign('All ctycodes',as.character(unique(dat$CtyCode)))
+      # output$ctycode_list =  renderUI(
+      #   if (is.null(input$country)){
+      #     selectInput("ctycode", "CtyCode", choices = c("All ctycodes", as.character(unique(fullData$data$CtyCode))), selected = input$ctycode, multiple = TRUE)
+      #   } else {selectInput("ctycode", "CtyCode", choices = c("All ctycodes", (unique(fullData$data[fullData$data$Country %in% (if(exists(input$country)){get(input$country)}else{input$country}), "CtyCode"]))), selected = input$ctycode, multiple = TRUE)
+      #   }
+      # )
+      
+    } else {id <<- showNotification(
+      'File "Country list.csv" not found. CtyCode and Region cannot be shown.',
+      duration = 10, 
+      closeButton = TRUE,
+      type = "warning"
+    )}
+    
+    # creating drop-down lists
+
+    output$country_list <- renderUI({
+      vars1 <- c("All countries", as.character(unique(dat$Country)))
+      selectInput("country", "Country",
+                  choices = vars1, selected = vars1[1], multiple = TRUE)
+    })
+
+    # assign('All countries',as.character(unique(dat$Country)))
+    # output$country_list =  renderUI(if ((is.null(input$ctycode))) {
+    #   selectInput("country", "Choose Country",
+    #               choices = c("All countries", unique(sort(fullData$data$Country))),
+    #               selected = input$country, multiple = TRUE)
+    # } else { selectInput("country", "Choose Country",
+    #                     choices = c("All countries", unique(fullData$data[fullData$data$CtyCode %in% (if (exists(input$ctycode))
+    #                     {get(input$ctycode)} else {input$ctycode}) , "Country"])),
+    #                     selected = input$country, multiple = TRUE)
+    # }
+    # )
+
+    
+    output$product_list <- renderUI({
+      vars2 <- c("All products", as.character(unique(dat$Product)))
+      selectInput("product", "Product",
+                  choices = vars2, selected = vars2[1], multiple = TRUE)
+    })
+    
+    output$year_list <- renderUI({
+      vars3 <- c("All years", as.character(unique(dat$Year)))
+      selectInput("year", "Year",
+                  choices = vars3, selected = vars3[16], multiple = TRUE)
+    })
+    
+    
+    fullData$data <- dat
+    
+    shinyjs::showElement("country_pan")
+    shinyjs::showElement("product_pan")
+    shinyjs::showElement("year_pan")
+    shinyjs::showElement("formula_pan")
+    shinyjs::showElement("col_pan1")
+    shinyjs::showElement("col_pan2")
+    showTab("tabs","tab2")
+    } else {
+      dat = NULL
+      createAlert(session, "copyA", "copyInfo", dismiss = FALSE, style = "info", # (default, primary, success, info, warning, or danger)
+                  content = 'Incorrect file uploaded. Please check column names. All of the following headers should be used: "Product", "Country", "SimCountry", "Year", "Formula", "Similarity", "sim.own", "adj.value".')
+    }
+    } else {
+      dat = NULL
+      createAlert(session, "copyA", "copyInfo", dismiss = FALSE, style = "info", # (default, primary, success, info, warning, or danger)
+                  content = 'Incorrect file uploaded. Please check file type. It should be ".csv".')
+    }
+  })
+  
+  
+  ## |-- Filtering data ####
+  observeEvent(c(input$product, input$country, input$year, input$ctycode),{
+    if (!is.null(input$file1)){
+      closeAlert(session, "copyInfo")
+      
+    filtered_dat <- copy(fullData$data)
+    
+    if ("All products" %in% input$product) {
+      filtered_dat
+    } else {
+      filtered_dat <- filtered_dat[Product %in% input$product, ]
+    }
+    
+    if ("All countries" %in% input$country) {
+      filtered_dat
+    } else {
+      filtered_dat <- filtered_dat[Country %in% input$country, ]
+    }
+    
+    if ("All years" %in% input$year) {
+      filtered_dat
+    } else {
+      filtered_dat <- filtered_dat[Year %in% input$year, ]
+    }
+    
+    if (!is.null(fullData$data$CtyCode)){
+      shinyjs::show("ctycode_pan")
+      if ("All ctycodes" %in% input$ctycode) {
+        filtered_dat
+      } else {
+        filtered_dat <- filtered_dat[CtyCode %in% input$ctycode, ]
+      }
+    }
+    fullData$filtered <- filtered_dat
+    }
+  })
+  
+  ## |-- Selecting rows ####
+  observeEvent(input$main_tbl_rows_selected, {
+    if (!is.null(fullData$filtered)) {
+      sl <- input$main_tbl_rows_selected
+      
+      dsl <- setdiff(fullData$selected, sl)
+      
+      ff <- unique(fullData$filtered[rownames(fullData$filtered) %in%
+                                       sl, .(SimCountry, Product)])
+      # data new selected
+      fullData$drop <- unique(rbind(fullData$drop, ff))
+      
+      dff <- unique(fullData$filtered[rownames(fullData$filtered) %in%
+                                        dsl, .(SimCountry, Product)])
+      
+      # # drop deselected
+      # have_both <- fullData$filtered[fullData$filtered[, paste(SimCountry, Product)] %in%
+      #                                  fullData$drop[, paste(SimCountry, Product)], .(SimCountry, Product)]
+      # have_no_more <- have_both[!have_both[, paste(SimCountry, Product)] %in%
+      #                             ff[, paste(SimCountry, Product)], ]
+      if (nrow(dff) > 0)
+        fullData$drop <- setdiffDF(fullData$drop, dff, to.return = "A")
+      if (is.null(fullData$drop))
+        sl <- NULL
+      fullData$selected <- sl
+      
+      # saving surrent selections in .rds file
+      saveRDS(list(file_name = input$file1$name, data_file = fullData$drop), "drop_current.rds")
+      
+    }
+  }, ignoreNULL = F)
+  
+  
+  ## |-- Observing selections from the last session ####
+  observe(if (is.null(fullData$data)) {
+    if (file.exists("drop_current.rds")) {
+      read_current <- readRDS("drop_current.rds")
+      if (!is.null(read_current$data_file)) {
+        if (nrow(read_current$data_file) > 0) {
+          saveRDS(read_current, "drop_previous.rds")
+        }
+      }
+    }
+  })
+  
+  ## |-- Updating drop-down lists for second table ####
+  observe(if (!is.null(fullData$drop)) {
+    vars12 <- c("All", as.character(unique(fullData$drop$SimCountry)))
+    
+    updateSelectInput(session, "select_country", "Country",
+                      choices = vars12, selected = vars12[1])
+  })
+  
+  observe(if (!is.null(fullData$drop)) {
+    dff <- copy(fullData$drop)
+    
+    if ("All" %in% input$select_country) {
+      dff <- dff
+    } else if (length(input$select_country)) {
+      dff <- dff[SimCountry %in% input$select_country, ]
+    }
+    updateSelectInput(session, "select_product", "Product",
+                      choices = c("All", as.character(unique(dff$Product))))
+    
+  })
+  
+  
+  # 
+  # observe(if (!is.null(fullData$drop)) {
+  #   
+  #   output$select_country_list =  renderUI({
+  #     vars12 <- c("All", as.character(unique(fullData$drop$SimCountry)))
+  #     selectInput("select_country", "Country",
+  #                 choices = vars12, selected = vars12[1])
+  #   })
+  #   
+  #   output$select_product_list =  renderUI(
+  #     if(is.null(input$select_country) || input$select_country %in% "All"){ 
+  #       selectInput("select_product", "Product", choices = c("All", as.character(unique(fullData$drop$Product))), selected = "All", multiple = TRUE)
+  #     } else{selectInput("select_product", "Product", choices = c("All", (unique(fullData$drop[fullData$drop$SimCountry %in% (if(exists(input$select_country)){get(input$select_country)}else{input$select_country}), "Product"]))), selected = "All", multiple = TRUE)
+  #     }
+  #   )
+  # })
+  # 
+  
+  
+  # Output ------------------------------------------------------------------
+  
+  ## |-- Loading selections from the last session ####
+  observeEvent(input$get_old_dat,{
+    if(file.exists("drop_previous.rds")){
+      drp_prev <- readRDS("drop_previous.rds")
+      if(drp_prev$file_name == input$file1$name){
+        fullData$drop <- drp_prev$data_file
+      } else {id <<- showNotification(
+        "The action cannot be performed. File from the last session and current file are different.",
+        duration = 7, 
+        closeButton = TRUE,
+        type = "error"
+      )}
+    } else NULL
+  })
+  
+  ## |-- Formula ####
+  output$formula <- renderText({
+    formul <- (unique(fullData$data$Formula))
+    paste("Formula:", formul, sep = "\n")
+  })
+  
+  ## |-- Last file uploaded ####
+  observe({if(file.exists("drop_previous.rds")){
+    shinyjs::show("last_file_uploaded_pan")
+    shinyjs::show("get_old_dat_pan")
+    
+    output$last_file_uploaded <- renderText({
+      
+      file_name <- readRDS("drop_previous.rds")$file_name
+      paste("Last file uploaded:", file_name, sep = "\n")
+      
+    })  
+  }
+    else {shinyjs::hide("get_old_dat_pan")}
+  })
+  
+  ## |-- min/mean/max sim.own ####
+  output$simOwn <- DT::renderDataTable({
+    minmax_dat <- fullData$data
+    if (!is.null(minmax_dat)) {
+      
+      minmax <- minmax_dat[sim.own != 0 &
+                             complete.cases(sim.own) &
+                             Year %in% unique(minmax_dat$Year)[15],
+                           # & Year %in% input$year
+                           .(Product, SimCountry, sim.own, Year)]
+      
+      
+      if ("All products" %in% input$product) {
+        minmax
+      } else if (length(input$product)) {
+        minmax <- minmax[Product %in% input$product, ]
+      }
+      
+      minmax <- minmax[, .(min = round(min(sim.own), 3),
+                           mean = round(mean(unique(sim.own)), 3),
+                           max = round(max(sim.own), 3),
+                           Q1 = round(quantile(sim.own, 0.25), 3),
+                           Q3 = round(quantile(sim.own, 0.75), 3),
+                           N = uniqueN(sim.own)
+      ), by = .(Product)]
+      
+      # creating multi-level colnames
+      sketch = htmltools::withTags(table(class = "display",
+                                         thead(tr(
+                                           th(rowspan = 2, "Product"),
+                                           th(colspan = 6, paste(unique(minmax_dat$Year)[15], "sim.own values"))
+                                         ),
+                                         tr(
+                                           lapply(c("Minimum", "Average", "Maximum", "Q1", "Q3", "N"), th)
+                                         ))))
+      
+      row_numb_show <- if (nrow(minmax) <= 9) {nrow(minmax)} else(9)
+      
+      datatable(minmax,
+                class = "cell-border",
+                container = sketch,
+                rownames = FALSE,
+                extensions = c("Scroller"),
+                options = list(dom = "tip",
+                               scrollX = TRUE,
+                               deferRender = TRUE,
+                               scrollY = 40 * row_numb_show,
+                               scroller = TRUE
+                )
+      )
+    }
+  })
+  
+  ## |-- tab 2 table ####
+  output$selectdat <- DT::renderDataTable({
+    DFf <- copy(fullData$drop)
+    
+    if ("All" %in% input$select_country) {
+      DFf
+    } else if (length(input$select_country)) {
+      DFf <- DFf[SimCountry %in% input$select_country, ]
+    }
+    
+    if ("All" %in% input$select_product) {
+      DFf
+    } else if (length(input$select_product)) {
+      DFf <- DFf[Product %in% input$select_product, ]
+    }
+    if (!is.null(DFf)){
+      setnames(DFf, c("Country", "Product"))}
+    fullData$DFf <- DFf
+    
+    DT::datatable(DFf,
+                  class = "table-bordered",
+                  options = list(dom = "t",
+                                 pageLength = nrow(DFf)),
+                  rownames = FALSE)
+  })
+  
+  ## Copy button
+  output$clip <- renderUI({
+    zeroclipButton("clipbtn", "Copy selected rows", "some text", icon("clipboard"))
+  })
+  
+  observeEvent(input$clipbtn,{ 
+    dat_to_copy <- copy(fullData$DFf[input$selectdat_rows_selected,])
+    clipr::write_clip(dat_to_copy)
+  })
+  
+  observe({if(length(input$selectdat_rows_selected) > 0){
+    shinyjs::show("copy_pan")
+  } else {shinyjs::hide("copy_pan")}
+    })
+
+  
+
+  
+  ## |-- Main table ####
+  observeEvent(c(input$product, input$country, input$year, input$ctycode, input$get_old_dat, input$scaling_on, input$scaling_numb, input$exp_adj_val, input$main_tbl_rows_selected),{
+    if(!is.null(fullData$data)){
+      
+      # getting row numbers
+    output$main_tbl <- DT::renderDataTable({
+      sl <- NULL
+      DF <- fullData$filtered
+      if (!is.null(DF))
+        drp <- fullData$drop
+      if (!is.null(drp)) {
+        if (nrow(drp) > 0)
+          sl <-
+            rownames(DF)[which(DF[, paste(Product, SimCountry)] %in% drp[, paste(Product, SimCountry)])]
+      }
+      
+      # adj.value scaling
+        if(input$scaling_on != F){
+          DF[ ,adj.value2 := (adj.value - 1)/input$scaling_numb]
+        } else {DF[ ,adj.value2 := adj.value]}
+        
+        if(input$exp_adj_val != F){
+          DF[ ,adj.value2 := exp(adj.value2)]}
+     
+      
+      # rows' number to show
+      row_numb_show_DF <- if (nrow(DF) <= 20) {1 + nrow(DF)} else (20)
+      
+      # columns to show depends on existence of "Country list" file
+      if (!is.null(fullData$data$CtyCode)){
+        col_to_show = c("CtyCode", "Region", "Product", "Country", "SimCountry", "Year", "adj.value", "adj.value2")}
+      else {col_to_show = c("Product", "Country", "SimCountry", "Year", "adj.value", "adj.value2")}
+      
+      
+      datatable(
+        DF[, col_to_show, with = F],
+        # extensions = c("ColReorder", "Responsive"),
+        extensions = c("Scroller"),
+        class = "table-bordered",
+        options = list(
+          dom = "ft",
+          colReorder = TRUE,
+          searchHighlight = TRUE,
+          deferRender = TRUE,
+          scrollY = 37 * row_numb_show_DF,
+          scroller = TRUE,
+          scrollX = TRUE,
+          autoWidth = TRUE
+        ),
+        selection = list(mode = "multiple", selected = sl)
+      ) %>% formatRound(c("adj.value", "adj.value2"), 3)
+    })
+    }
+  })
+  
+
+  ## |-- Showing scaling formula 
+  observe({
+    if (!is.null(fullData$data)) {
+      output$adj_val_2 <- renderUI({
+        if (input$scaling_on != F) {
+          if (input$exp_adj_val != F) {
+            
+            withMathJax(sprintf("$$adj.value2=exp\\left[\\frac{adj.value - 1}{%.03f}\\right]$$", input$scaling_numb)
+            )
+          } else{
+            withMathJax(sprintf("$$adj.value2=\\frac{adj.value - 1}{%.03f}$$", input$scaling_numb)
+            )
+            
+          }
+        } else if (input$scaling_on == F) {
+          if (input$exp_adj_val != F)
+          {       withMathJax(helpText("$$adj.value2=exp(adj.value)$$")
+          )
+          } else{
+            withMathJax(helpText("$$adj.value2=adj.value$$")
+            )
+          }
+        }
+      })
+    }
+  })
+  
+  
+  ###############################################################################
+  ## |-- Main table ####
+  # output$main_tbl <- DT::renderDataTable({
+  #   DF <- fullData$filtered
+  #   
+  #   datatable(
+  #     DF[, c("Product", "Country", "SimCountry", "Year", "adj.value"), with = F],
+  #     # extensions = c("ColReorder", "Responsive"),
+  #     extensions = c("Scroller"),
+  #     class = "table-bordered",
+  #     options = list(
+  #       dom = "ft",
+  #       colReorder = TRUE,
+  #       searchHighlight = TRUE,
+  #       deferRender = TRUE,
+  #       scrollY = 3700,
+  #       scroller = TRUE,
+  #       scrollX = TRUE,
+  #       autoWidth = TRUE
+  #     ),
+  #     selection = list(mode = "multiple", target = "row")
+  #   )
+  # })
+  # 
+  # 
+  # 
+  
+  
+  # proxy = dataTableProxy('main_tbl')
+  # 
+  # observeEvent(c(input$product, input$country, input$year, input$main_tbl_rows_selected),{
+  #   sl <- NULL
+  #   DF <- fullData$filtered
+  #   if (!is.null(DF))
+  #     drp <- fullData$drop
+  #   if (!is.null(drp)) {
+  #     if (nrow(drp) > 0)
+  #       sl <-
+  #         rownames(DF)[which(DF[, paste(Product, SimCountry)] %in% drp[, paste(Product, SimCountry)])]
+  #   }
+  #   
+  #   
+  #   
+  #   
+  #   proxy %>% selectRows(as.numeric(sl))
+  # })
+  # 
+
+  ###############################################################################
+  
+  
+  ## |-- Download ####
+  output$downloadData <- downloadHandler(
+    filename = function() {
+      paste("data", ".csv", sep = "")
+    },
+    content = function(file) {
+      DF <- copy(fullData$drop)
+      setnames(DF, c("Country", "Product"))
+      write.csv(fullData$drop, file, row.names = FALSE)
+    }
+  )
+}
+
+# Shiny app ---------------------------------------------------------------
+shinyApp(ui, server)

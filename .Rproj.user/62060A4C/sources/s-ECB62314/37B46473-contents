@@ -1,0 +1,2 @@
+library(data.table)
+dat <- fread("OxfordManRealizedVolatilityIndices.csv", select = 1:2, colnames = FALSE)[-1:2,]

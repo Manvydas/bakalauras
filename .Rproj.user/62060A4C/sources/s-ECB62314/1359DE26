@@ -1,0 +1,29 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1525952928998.000,
+    "dirty" : false,
+    "encoding" : "",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "1359DE26",
+    "lastKnownWriteTime" : 4294967302,
+    "last_content_update" : 1525952928998,
+    "path" : null,
+    "project_path" : null,
+    "properties" : {
+        "cacheKey" : "F2F35081",
+        "caption" : "rvsp500",
+        "contentUrl" : "grid_resource/gridviewer.html?env=&obj=rvsp500&cache_key=F2F35081",
+        "displayedObservations" : "3459",
+        "environment" : "",
+        "object" : "rvsp500",
+        "preview" : "0",
+        "totalObservations" : "3459",
+        "variables" : "2"
+    },
+    "relative_order" : 2,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_dataframe"
+}
