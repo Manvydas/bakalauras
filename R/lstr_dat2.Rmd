@@ -1,0 +1,120 @@
+---
+title: "lstr_dat2"
+author: "Manvydas Sokolovas, p3170190"
+date: "5/27/2018"
+output: html_document
+---
+
+```{r, include=FALSE}
+library(midasr)
+library(dplyr)
+```
+
+### preparing data
+```{r}
+zz <- read.csv("OxfordManRealizedVolatilityIndices.csv", stringsAsFactors = FALSE, skip = 3)
+grep("[.]rv$",colnames(zz), value=TRUE)
+rr <- zz %>% select(DateID,RUT2.rv) %>% mutate(rv = 100 * sqrt(252*RUT2.rv))
+rv1 <- na.omit(rr$rv)
+rv2 <- mls(rv1, 1:20, 1)
+dat <- na.omit(cbind("y" = rv1, rv2))
+```
+
+### lstr function
+```{r}
+lstr_m <- function(y, x, z=NULL, weight, startx, method=c("Nelder-Mead","BFGS")){
+  d <- ncol(x)
+  
+  # weight function
+  all_coef <- function(p) {
+    weight(p,d)
+  }
+  
+  GG <- function(p){
+   b3 <- p[4]; b4 <- p[5]
+    xm <- x%*%(all_coef(p))
+    (1 + exp(-b3 * (xm - b4) / sd(x)))^{-1}
+  }
+  # midasr
+  lstr <- function(p){
+    b0 <- p[1]; b1 <- p[2]; b2 <- p[3]
+    xm <- x%*%(all_coef(p))
+    mod <- b0 + b1*xm*(1 + b2 * GG(p))
+    sum((y-mod)^2)
+  }
+  
+  cc <- optimx(par=startx, lstr, method=method)
+  ccmin <- which.min(cc$value)
+  cc <- cc[ccmin, ]
+  par <- as.numeric(cc[ ,1:length(startx)])
+  fitt <- x%*%all_coef(par)
+  ress <- y - x%*%all_coef(par)
+  
+  out1 <- list("data" = cbind(y,x),
+              "coef" = par,
+              "mid_coef" = all_coef(par),
+              "RSS" = cc$value,
+              "fitted" = fitt,
+              "residuals" = y-fitt,
+              "mse" = mean((y-fitt) ^ 2))
+  
+  # Galvao
+  lstr <- function(p){
+    b0 <- p[1]; b1 <- p[2]; b2 <- p[3]
+    xm <- x%*%(all_coef(p))
+    mod <- b0 + b1*xm + (b2-b1)*GG(p)
+    sum((y-mod)^2)
+  }
+  
+  cc <- optimx(par=startx, lstr, method=method)
+  ccmin <- which.min(cc$value)
+  cc <- cc[ccmin, ]
+  par <- as.numeric(cc[ ,1:length(startx)])
+  fitt <- x%*%all_coef(par)
+  ress <- y - x%*%all_coef(par)
+  
+  out2 <- list("data" = cbind(y,x),
+               "coef" = par,
+               "mid_coef" = all_coef(par),
+               "RSS" = cc$value,
+               "fitted" = fitt,
+               "residuals" = y-fitt,
+               "mse" = mean((y-fitt) ^ 2))
+  
+  list("midasr" = out1, "galvao" = out2)
+}
+```
+
+
+```{r}
+mr <- lstr_m(dat[,1], dat[,-1], weight = nbeta, startx = c(1,1,1,1,1))
+mrs <- midas_r_simple(dat[,1], dat[,-1], weight = nbeta, startx = c(1,1,1))
+```
+
+```{r}
+mr$midasr[-c(1,5:6)]
+mr$galvao[-c(1,5:6)]
+list("coef"=mrs$coefficients, "mid_coef"=mrs$midas_coefficients, "mse"=mean((mrs$model[,1]-mrs$model[,-1]%*%mrs$midas_coefficients)^2))
+```
+### mse
+```{r}
+mr$midasr$mse 
+mr$galvao$mse 
+mean((mrs$model[,1]-mrs$model[,-1]%*%mrs$midas_coefficients)^2) 
+```
+
+### data
+```{r}
+summary(mr$midasr$data[ ,1])
+```
+
+### residuals
+```{r}
+summary(mr$midasr$residuals)
+summary(mr$galvao$residuals)
+summary(mrs$residuals)
+```
+
+
+
+
